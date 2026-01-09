@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useSession, signOut } from 'next-auth/react';
+import { useSession, signOut } from '@/components/auth-provider';
 import { ShoppingCart, User, LogOut, LayoutDashboard } from 'lucide-react';
 import { Button } from './ui/button';
 import { useEffect, useState } from 'react';
@@ -48,7 +48,7 @@ export function Header() {
     return null;
   }
 
-  const isAdmin = (session?.user as any)?.role === 'ADMIN';
+  const isAdmin = (session?.user as any)?.role === 'ADMIN' || (session?.user as any)?.role === 'admin';
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-white/80 backdrop-blur-md">
@@ -86,7 +86,14 @@ export function Header() {
                 </Link>
                 <div className="flex items-center gap-2">
                   <User className="h-5 w-5 text-gray-600" />
-                  <span className="text-sm text-gray-700">{session.user?.name || session.user?.email}</span>
+                  <div className="flex flex-col">
+                      <span className="text-sm text-gray-700 font-medium">
+                        {session.user?.user_metadata?.full_name || session.user?.email}
+                      </span>
+                      <span className="text-[10px] text-gray-400 capitalize">
+                         {(session.user as any)?.role || 'Cargando...'}
+                      </span>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"

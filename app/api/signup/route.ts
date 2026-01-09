@@ -1,22 +1,20 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+import { getUserByEmail, createUser } from "@/lib/supabase/database";
 import bcrypt from "bcryptjs";
 
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { email, password, name } = body;
+    const { email, password, name, id } = body;
 
-    if (!email || !password) {
+    if (!email || (!password && !id)) {
       return NextResponse.json(
-        { error: "Email y contraseña son requeridos" },
+        { error: "Email y contraseña (o ID) son requeridos" },
         { status: 400 }
       );
     }
 
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await getUserByEmail(email);
 
     if (existingUser) {
       return NextResponse.json(
@@ -25,15 +23,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = password ? await bcrypt.hash(password, 10) : undefined;
 
-    const user = await prisma.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        name: name || null,
-        role: "CUSTOMER",
-      },
+    const user = await createUser({
+      id: id || undefined,
+      email,
+      password: hashedPassword,
+      name: name || undefined,
+      role: "CUSTOMER",
     });
 
     return NextResponse.json(

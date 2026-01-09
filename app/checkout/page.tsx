@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/components/auth-provider';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
@@ -37,7 +37,7 @@ export default function CheckoutPage() {
     if (status === 'authenticated') {
       fetchCart();
       setShippingEmail(session?.user?.email || '');
-      setShippingName(session?.user?.name || '');
+      setShippingName(session?.user?.user_metadata?.full_name || '');
     }
   }, [status, router, session]);
 

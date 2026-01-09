@@ -1,47 +1,19 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { getOrdersByUser, getDB } from "@/lib/supabase/database";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
-    const userRole = (session.user as any).role;
-
-    const where = userRole === "ADMIN" ? {} : { userId };
-
-    const orders = await prisma.order.findMany({
-      where,
-      include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-        user: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
+    const orders = await getOrdersByUser(user.id);
     return NextResponse.json(orders);
   } catch (error) {
     console.error("Error fetching orders:", error);
@@ -54,76 +26,49 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
     const body = await request.json();
-    const { shippingName, shippingEmail, shippingAddress, items } = body;
+    const { items, shippingDetails, total } = body;
 
-    if (!shippingName || !shippingEmail || !shippingAddress || !items || items.length === 0) {
-      return NextResponse.json(
-        { error: "Faltan datos requeridos" },
-        { status: 400 }
-      );
-    }
-
-    let total = 0;
-    const orderItems = [];
-
-    for (const item of items) {
-      const product = await prisma.product.findUnique({
-        where: { id: item.productId },
-      });
-
-      if (!product) {
-        return NextResponse.json(
-          { error: `Producto ${item.productId} no encontrado` },
-          { status: 404 }
-        );
-      }
-
-      const itemTotal = product.price * item.quantity;
-      total += itemTotal;
-
-      orderItems.push({
-        productId: item.productId,
-        quantity: item.quantity,
-        price: product.price,
-      });
-    }
-
-    const order = await prisma.order.create({
-      data: {
-        userId,
+    // 1. Create Order
+    const { data: order, error: orderError } = await getDB()
+      .from('Order')
+      .insert({
+        userId: user.id,
+        status: 'PENDING',
         total,
-        shippingName,
-        shippingEmail,
-        shippingAddress,
-        status: "PENDING",
-        items: {
-          create: orderItems,
-        },
-      },
-      include: {
-        items: {
-          include: {
-            product: true,
-          },
-        },
-      },
-    });
+        shippingName: shippingDetails.name,
+        shippingEmail: shippingDetails.email,
+        shippingAddress: shippingDetails.address,
+        updatedAt: new Date().toISOString()
+      })
+      .select()
+      .single();
 
-    // Clear cart after order
-    await prisma.cartItem.deleteMany({
-      where: { userId },
-    });
+    if (orderError) throw orderError;
+
+    // 2. Create Order Items
+    const orderItems = items.map((item: any) => ({
+      orderId: order.id,
+      productId: item.productId,
+      quantity: item.quantity,
+      price: item.price
+    }));
+
+    const { error: itemsError } = await getDB()
+      .from('OrderItem')
+      .insert(orderItems);
+
+    if (itemsError) throw itemsError;
+
+    // 3. Clear Cart (optional, but expected flow)
+    await getDB().from('CartItem').delete().eq('userId', user.id);
 
     return NextResponse.json(order, { status: 201 });
   } catch (error) {

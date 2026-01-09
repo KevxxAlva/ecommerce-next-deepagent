@@ -1,18 +1,33 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { createClient } from "@/lib/supabase/server";
+import { updateUserRole } from "@/lib/supabase/database";
 
 export const dynamic = "force-dynamic";
 
-export async function PUT(
+export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user: currentUser } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
+    // Verify authentication
+    if (!currentUser) {
+       return NextResponse.json(
+        { error: "No autorizado" },
+        { status: 401 }
+      );
+    }
+
+    // Check if user is admin via database
+    const { data: dbUser } = await supabase
+        .from('User')
+        .select('role')
+        .eq('id', currentUser.id)
+        .single();
+
+    if (!dbUser || dbUser.role !== 'ADMIN') {
       return NextResponse.json(
         { error: "No autorizado" },
         { status: 401 }
@@ -29,19 +44,15 @@ export async function PUT(
       );
     }
 
-    const user = await prisma.user.update({
-      where: { id: params.id },
-      data: { role },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-      },
-    });
+    const updatedUser = await updateUserRole(params.id, role);
 
-    return NextResponse.json(user);
+    return NextResponse.json({
+        id: updatedUser.id,
+        name: updatedUser.name,
+        email: updatedUser.email,
+        role: updatedUser.role,
+        createdAt: updatedUser.createdAt
+    });
   } catch (error) {
     console.error("Error updating user:", error);
     return NextResponse.json(
@@ -49,4 +60,12 @@ export async function PUT(
       { status: 500 }
     );
   }
+}
+
+// Keep PUT for backward compatibility if client uses it, but logic is same
+export async function PUT(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+    return PATCH(request, { params });
 }

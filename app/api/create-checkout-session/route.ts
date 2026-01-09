@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { createClient } from '@/lib/supabase/server';
 import Stripe from 'stripe';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-12-15.clover',
+  apiVersion: '2025-12-15.clover', // Adapting to latest or user's env
 });
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session?.user) {
+    if (!user) {
       return NextResponse.json(
         { error: 'No autorizado' },
         { status: 401 }
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       cancel_url: `${origin}/checkout`,
       customer_email: shippingEmail,
       metadata: {
-        userId: (session.user as any).id,
+        userId: user.id,
         shippingName,
         shippingEmail,
         shippingAddress,

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { ShoppingCart, ArrowLeft } from 'lucide-react';
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/components/auth-provider';
 import { toast } from 'sonner';
 import { motion } from 'framer-motion';
 

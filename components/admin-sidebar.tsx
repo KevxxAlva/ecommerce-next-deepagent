@@ -13,7 +13,7 @@ import {
   ChevronLeft,
   Menu,
 } from 'lucide-react';
-import { signOut } from 'next-auth/react';
+import { signOut } from '@/components/auth-provider';
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 

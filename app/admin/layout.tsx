@@ -1,21 +1,31 @@
-import { getServerSession } from 'next-auth';
 import { redirect } from 'next/navigation';
-import { authOptions } from '@/lib/auth-options';
+import { createClient } from '@/lib/supabase/server';
 import { AdminSidebar } from '@/components/admin-sidebar';
+import { getUserById } from '@/lib/supabase/database';
 
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession(authOptions);
+  const supabase = createClient();
+  
+  const { data: { user } } = await supabase.auth.getUser();
 
-  // Check if user is authenticated and is admin
-  if (!session?.user) {
+  // Check if user is authenticated
+  if (!user) {
     redirect('/login');
   }
 
-  if ((session.user as any).role !== 'ADMIN') {
+  // Get user role from database
+  try {
+    const dbUser = await getUserById(user.id);
+    
+    if (!dbUser || dbUser.role !== 'ADMIN') {
+      redirect('/');
+    }
+  } catch (error) {
+    console.error('Error fetching user:', error);
     redirect('/');
   }
 

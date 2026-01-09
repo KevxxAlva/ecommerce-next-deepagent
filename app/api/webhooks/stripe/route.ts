@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
 import Stripe from 'stripe';
-import { prisma } from '@/lib/db';
+import { getDB } from '@/lib/supabase/database';
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: '2025-12-15.clover',
@@ -24,7 +24,7 @@ export async function POST(request: Request) {
 
     let event: Stripe.Event;
 
-    // Verify webhook signature (if webhook secret is configured)
+    // Verify webhook signature
     if (webhookSecret) {
       try {
         event = stripe.webhooks.constructEvent(body, signature, webhookSecret);
@@ -36,7 +36,6 @@ export async function POST(request: Request) {
         );
       }
     } else {
-      // For development without webhook secret
       event = JSON.parse(body);
     }
 
@@ -59,6 +58,8 @@ export async function POST(request: Request) {
 
       // Create order items from line items
       const orderItems = [];
+      const db = getDB();
+
       for (const item of lineItems) {
         let productName = 'Unknown product';
         
@@ -66,10 +67,12 @@ export async function POST(request: Request) {
           productName = item.price.product.name || 'Unknown product';
         }
         
-        // Try to find product by name
-        const product = await prisma.product.findFirst({
-          where: { name: productName },
-        });
+        // Find product by name
+        const { data: product } = await db
+            .from('Product')
+            .select('id')
+            .eq('name', productName)
+            .single();
 
         if (product) {
           orderItems.push({
@@ -80,26 +83,47 @@ export async function POST(request: Request) {
         }
       }
 
-      // Create order in database
-      await prisma.order.create({
-        data: {
+      // Create order
+      const { data: order, error: orderError } = await db
+        .from('Order')
+        .insert({
           userId: metadata.userId,
           total: (fullSession.amount_total || 0) / 100,
           shippingName: metadata.shippingName || '',
           shippingEmail: metadata.shippingEmail || '',
           shippingAddress: metadata.shippingAddress || '',
-          status: 'PROCESSING',
+          status: 'PROCESSING', // Paid
           stripePaymentId: session.payment_intent as string,
-          items: {
-            create: orderItems,
-          },
-        },
-      });
+          updatedAt: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (orderError) {
+          console.error("Error creating order:", orderError);
+          throw orderError;
+      }
+
+      // Assign items to order
+      const orderItemsWithId = orderItems.map(item => ({
+          ...item,
+          orderId: order.id
+      }));
+
+      const { error: itemsError } = await db
+        .from('OrderItem')
+        .insert(orderItemsWithId);
+        
+      if (itemsError) {
+          console.error("Error creating order items:", itemsError);
+          throw itemsError;
+      }
 
       // Clear user's cart
-      await prisma.cartItem.deleteMany({
-        where: { userId: metadata.userId },
-      });
+      await db
+        .from('CartItem')
+        .delete()
+        .eq('userId', metadata.userId);
 
       console.log('Order created successfully for session:', session.id);
     }

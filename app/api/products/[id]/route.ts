@@ -1,21 +1,13 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
-
-export const dynamic = "force-dynamic";
+import { getProductById, getDB } from "@/lib/supabase/database";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const product = await prisma.product.findUnique({
-      where: { id: params.id },
-      include: {
-        category: true,
-      },
-    });
+    const product = await getProductById(params.id);
 
     if (!product) {
       return NextResponse.json(
@@ -34,37 +26,37 @@ export async function GET(
   }
 }
 
-export async function PUT(
+export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
     const body = await request.json();
-    const { name, description, price, categoryId, images, stock } = body;
+    const { name, description, price, images, stock, categoryId } = body;
 
-    const product = await prisma.product.update({
-      where: { id: params.id },
-      data: {
-        ...(name && { name }),
-        ...(description && { description }),
-        ...(price && { price: parseFloat(price) }),
-        ...(categoryId && { categoryId }),
-        ...(images && { images }),
-        ...(stock !== undefined && { stock: parseInt(stock) }),
-      },
-      include: {
-        category: true,
-      },
-    });
+    const { data: product, error } = await getDB()
+      .from('Product')
+      .update({
+        name,
+        description,
+        price: price ? parseFloat(price) : undefined,
+        images,
+        stock: stock ? parseInt(stock) : undefined,
+        categoryId,
+        updatedAt: new Date().toISOString(),
+      })
+      .eq('id', params.id)
+      .select()
+      .single();
+
+    if (error) throw error;
 
     return NextResponse.json(product);
   } catch (error) {
@@ -81,18 +73,19 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    await prisma.product.delete({
-      where: { id: params.id },
-    });
+    const { error } = await getDB()
+      .from('Product')
+      .delete()
+      .eq('id', params.id);
+
+    if (error) throw error;
 
     return NextResponse.json({ message: "Producto eliminado" });
   } catch (error) {

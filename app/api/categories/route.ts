@@ -1,23 +1,12 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { getCategories, getDB } from "@/lib/supabase/database";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const categories = await prisma.category.findMany({
-      orderBy: {
-        name: "asc",
-      },
-      include: {
-        _count: {
-          select: { products: true },
-        },
-      },
-    });
-
+    const categories = await getCategories();
     return NextResponse.json(categories);
   } catch (error) {
     console.error("Error fetching categories:", error);
@@ -30,37 +19,35 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
     const body = await request.json();
-    const { name, description } = body;
+    const { name, description, slug } = body;
 
-    if (!name) {
+    if (!name || !slug) {
       return NextResponse.json(
-        { error: "El nombre es requerido" },
+        { error: "Nombre y slug son requeridos" },
         { status: 400 }
       );
     }
 
-    const slug = name
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "-");
-
-    const category = await prisma.category.create({
-      data: {
+    const { data: category, error } = await getDB()
+      .from('Category')
+      .insert({
         name,
-        description: description || null,
+        description,
         slug,
-      },
-    });
+        updatedAt: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (error) throw error;
 
     return NextResponse.json(category, { status: 201 });
   } catch (error) {

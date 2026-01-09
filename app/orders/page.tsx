@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/components/auth-provider';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { Package, Eye } from 'lucide-react';

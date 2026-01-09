@@ -1,37 +1,19 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { getCartItems, getDB, getProductById } from "@/lib/supabase/database";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
-
-    const cartItems = await prisma.cartItem.findMany({
-      where: { userId },
-      include: {
-        product: {
-          include: {
-            category: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
-
+    const cartItems = await getCartItems(user.id);
     return NextResponse.json(cartItems);
   } catch (error) {
     console.error("Error fetching cart:", error);
@@ -44,66 +26,72 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    const userId = (session.user as any).id;
     const body = await request.json();
     const { productId, quantity } = body;
 
-    if (!productId || !quantity || quantity < 1) {
+    if (!productId || !quantity) {
       return NextResponse.json(
-        { error: "Datos inválidos" },
+        { error: "Producto y cantidad son requeridos" },
         { status: 400 }
       );
     }
 
-    const existingItem = await prisma.cartItem.findUnique({
-      where: {
-        userId_productId: {
-          userId,
-          productId,
-        },
-      },
-    });
+    // Check if product exists
+    const product = await getProductById(productId);
+    if (!product) {
+        return NextResponse.json({ error: "Producto no encontrado" }, { status: 404 });
+    }
+
+    // Check if item already in cart
+    const { data: existingItem, error: fetchError } = await getDB()
+      .from('CartItem')
+      .select('*')
+      .eq('userId', user.id)
+      .eq('productId', productId)
+      .single();
+
+    if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116 = not found
+        throw fetchError;
+    }
 
     let cartItem;
 
     if (existingItem) {
-      cartItem = await prisma.cartItem.update({
-        where: { id: existingItem.id },
-        data: {
-          quantity: existingItem.quantity + quantity,
-        },
-        include: {
-          product: {
-            include: {
-              category: true,
-            },
-          },
-        },
-      });
+      // Update quantity
+      const { data, error } = await getDB()
+        .from('CartItem')
+        .update({
+            quantity: existingItem.quantity + quantity,
+            updatedAt: new Date().toISOString()
+        })
+        .eq('id', existingItem.id)
+        .select()
+        .single();
+      
+      if (error) throw error;
+      cartItem = data;
     } else {
-      cartItem = await prisma.cartItem.create({
-        data: {
-          userId,
-          productId,
-          quantity,
-        },
-        include: {
-          product: {
-            include: {
-              category: true,
-            },
-          },
-        },
-      });
+      // Create new item
+      const { data, error } = await getDB()
+        .from('CartItem')
+        .insert({
+            userId: user.id,
+            productId,
+            quantity,
+            updatedAt: new Date().toISOString()
+        })
+        .select()
+        .single();
+      
+      if (error) throw error;
+      cartItem = data;
     }
 
     return NextResponse.json(cartItem, { status: 201 });
@@ -117,89 +105,91 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+  
+      if (!user) {
+        return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+      }
+  
+      const body = await request.json();
+      const { itemId, quantity } = body;
+  
+      if (!itemId || quantity === undefined) {
+        return NextResponse.json(
+          { error: "ID de item y cantidad son requeridos" },
+          { status: 400 }
+        );
+      }
 
-    if (!session?.user) {
+      if (quantity <= 0) {
+           // Delete if quantity is 0 or less
+           const { error } = await getDB()
+            .from('CartItem')
+            .delete()
+            .eq('id', itemId)
+            .eq('userId', user.id); // Security check
+            
+           if (error) throw error;
+           return NextResponse.json({ message: "Item eliminado" });
+      }
+  
+      const { data: cartItem, error } = await getDB()
+        .from('CartItem')
+        .update({
+            quantity,
+            updatedAt: new Date().toISOString()
+        })
+        .eq('id', itemId)
+        .eq('userId', user.id)
+        .select()
+        .single();
+  
+      if (error) throw error;
+  
+      return NextResponse.json(cartItem);
+    } catch (error) {
+      console.error("Error updating cart:", error);
       return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
+        { error: "Error al actualizar carrito" },
+        { status: 500 }
       );
     }
-
-    const userId = (session.user as any).id;
-    const body = await request.json();
-    const { cartItemId, quantity } = body;
-
-    if (!cartItemId || quantity < 1) {
-      return NextResponse.json(
-        { error: "Datos inválidos" },
-        { status: 400 }
-      );
-    }
-
-    const cartItem = await prisma.cartItem.update({
-      where: {
-        id: cartItemId,
-        userId,
-      },
-      data: {
-        quantity,
-      },
-      include: {
-        product: {
-          include: {
-            category: true,
-          },
-        },
-      },
-    });
-
-    return NextResponse.json(cartItem);
-  } catch (error) {
-    console.error("Error updating cart:", error);
-    return NextResponse.json(
-      { error: "Error al actualizar carrito" },
-      { status: 500 }
-    );
-  }
 }
 
 export async function DELETE(request: Request) {
-  try {
-    const session = await getServerSession(authOptions);
+    try {
+        const supabase = createClient();
+        const { data: { user } } = await supabase.auth.getUser();
+        
+        const { searchParams } = new URL(request.url);
+        const itemId = searchParams.get('itemId');
 
-    if (!session?.user) {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+        if (!user) {
+            return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+        }
+
+        if (itemId) {
+             const { error } = await getDB()
+                .from('CartItem')
+                .delete()
+                .eq('id', itemId)
+                .eq('userId', user.id);
+            if (error) throw error;
+        } else {
+            // Clear entire cart
+             const { error } = await getDB()
+                .from('CartItem')
+                .delete()
+                .eq('userId', user.id);
+            if (error) throw error;
+        }
+
+        return NextResponse.json({ message: "Carrito actualizado" });
+
+    } catch (error) {
+        console.error("Error deleting from cart:", error);
+        return NextResponse.json({ error: "Error al eliminar del carrito" }, { status: 500 });
     }
-
-    const userId = (session.user as any).id;
-    const { searchParams } = new URL(request.url);
-    const cartItemId = searchParams.get("cartItemId");
-
-    if (!cartItemId) {
-      return NextResponse.json(
-        { error: "ID del item requerido" },
-        { status: 400 }
-      );
-    }
-
-    await prisma.cartItem.delete({
-      where: {
-        id: cartItemId,
-        userId,
-      },
-    });
-
-    return NextResponse.json({ message: "Item eliminado del carrito" });
-  } catch (error) {
-    console.error("Error deleting cart item:", error);
-    return NextResponse.json(
-      { error: "Error al eliminar item" },
-      { status: 500 }
-    );
-  }
 }

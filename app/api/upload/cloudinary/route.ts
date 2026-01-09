@@ -1,18 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getServerSession } from 'next-auth';
-import { authOptions } from '@/lib/auth-options';
+import { createClient } from '@/lib/supabase/server';
+import { getUserById } from '@/lib/supabase/database';
 import { uploadToCloudinary } from '@/lib/cloudinary';
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    // Check authentication and admin role
-    if (!session || (session?.user as any)?.role !== 'ADMIN') {
-      return NextResponse.json(
-        { error: 'No autorizado' },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+
+    // Check admin role
+    const dbUser = await getUserById(user.id);
+    if (dbUser.role !== 'ADMIN') {
+        return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
     }
 
     const formData = await request.formData();

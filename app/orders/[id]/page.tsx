@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
+import { useSession } from '@/components/auth-provider';
 import Image from 'next/image';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Package } from 'lucide-react';

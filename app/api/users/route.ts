@@ -1,39 +1,37 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { createClient } from "@/lib/supabase/server";
+import { getUserById, getUserByEmail, createUser } from "@/lib/supabase/database";
 import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
+    if (!authUser) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
+    const currentUser = await getUserById(authUser.id);
+    
+    if (!currentUser || currentUser.role !== "ADMIN") {
       return NextResponse.json(
         { error: "No autorizado" },
         { status: 401 }
       );
     }
 
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-        _count: {
-          select: {
-            orders: true,
-          },
-        },
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    const { data: users, error } = await supabase
+      .from('User')
+      .select('id, name, email, role, createdAt')
+      .order('createdAt', { ascending: false });
+
+    if (error) throw error;
 
     return NextResponse.json(users);
   } catch (error) {
@@ -47,9 +45,19 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user: authUser } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
+    if (!authUser) {
+      return NextResponse.json(
+        { error: "No autenticado" },
+        { status: 401 }
+      );
+    }
+
+    const currentUser = await getUserById(authUser.id);
+    
+    if (!currentUser || currentUser.role !== "ADMIN") {
       return NextResponse.json(
         { error: "No autorizado" },
         { status: 401 }
@@ -75,9 +83,7 @@ export async function POST(request: Request) {
     }
 
     // Validar email único
-    const existingUser = await prisma.user.findUnique({
-      where: { email },
-    });
+    const existingUser = await getUserByEmail(email);
 
     if (existingUser) {
       return NextResponse.json(
@@ -98,23 +104,20 @@ export async function POST(request: Request) {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Crear usuario
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: hashedPassword,
-        role: role || "CUSTOMER",
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        createdAt: true,
-      },
+    const user = await createUser({
+      name,
+      email,
+      password: hashedPassword,
+      role: role || "CUSTOMER",
     });
 
-    return NextResponse.json(user, { status: 201 });
+    return NextResponse.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      createdAt: user.createdAt,
+    }, { status: 201 });
   } catch (error) {
     console.error("Error creating user:", error);
     return NextResponse.json(

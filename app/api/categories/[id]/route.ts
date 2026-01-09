@@ -1,45 +1,63 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth-options";
+import { getDB } from "@/lib/supabase/database";
+import { createClient } from "@/lib/supabase/server";
 
-export const dynamic = "force-dynamic";
-
-export async function PUT(
+export async function GET(
   request: Request,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const { data: category, error } = await getDB()
+      .from('Category')
+      .select('*')
+      .eq('id', params.id)
+      .single();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
+    if (error || !category) {
       return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
+        { error: "Categoría no encontrada" },
+        { status: 404 }
       );
     }
 
+    return NextResponse.json(category);
+  } catch (error) {
+    console.error("Error fetching category:", error);
+    return NextResponse.json(
+      { error: "Error al obtener categoría" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
+    }
+
     const body = await request.json();
-    const { name, description } = body;
+    const { name, description, slug } = body;
 
-    const updateData: any = {};
+    const { data: category, error } = await getDB()
+      .from('Category')
+      .update({
+        name,
+        description,
+        slug,
+        updatedAt: new Date().toISOString(),
+      })
+      .eq('id', params.id)
+      .select()
+      .single();
 
-    if (name) {
-      updateData.name = name;
-      updateData.slug = name
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "")
-        .replace(/\s+/g, "-");
-    }
-
-    if (description !== undefined) {
-      updateData.description = description || null;
-    }
-
-    const category = await prisma.category.update({
-      where: { id: params.id },
-      data: updateData,
-    });
+    if (error) throw error;
 
     return NextResponse.json(category);
   } catch (error) {
@@ -56,18 +74,19 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getServerSession(authOptions);
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-    if (!session || (session?.user as any)?.role !== "ADMIN") {
-      return NextResponse.json(
-        { error: "No autorizado" },
-        { status: 401 }
-      );
+    if (!user) {
+      return NextResponse.json({ error: "No autorizado" }, { status: 401 });
     }
 
-    await prisma.category.delete({
-      where: { id: params.id },
-    });
+    const { error } = await getDB()
+      .from('Category')
+      .delete()
+      .eq('id', params.id);
+
+    if (error) throw error;
 
     return NextResponse.json({ message: "Categoría eliminada" });
   } catch (error) {

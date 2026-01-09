@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -9,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Mail, Lock, User } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { toast } from 'sonner';
+import { createClient } from '@/lib/supabase/client';
 
 export default function SignupPage() {
   const [name, setName] = useState('');
@@ -16,40 +16,56 @@ export default function SignupPage() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const supabase = createClient();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      const res = await fetch('/api/signup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: name,
+          },
+        },
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        toast.error(data.error || 'Error al registrarse');
+      if (authError) {
+        toast.error(authError.message);
         setLoading(false);
         return;
       }
 
-      toast.success('Cuenta creada exitosamente');
+      if (authData?.user) {
+        const res = await fetch('/api/signup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            email,
+            id: authData.user.id,
+          }),
+        });
 
-      // Auto login after signup
-      const result = await signIn('credentials', {
-        email,
-        password,
-        redirect: false,
-      });
+        if (!res.ok) {
+          const data = await res.json();
+          console.error('Profile creation failed:', data);
+          toast.error('Error al crear el perfil de usuario');
+          return;
+        }
 
-      if (result?.error) {
-        toast.error('Error al iniciar sesión');
-        router.push('/login');
-      } else {
-        router.replace('/');
+        toast.success('Cuenta creada exitosamente');
+
+        if (authData.session) {
+          router.refresh();
+          router.replace('/');
+        } else {
+          toast.info('Por favor verifica tu email para continuar.');
+          router.push('/login');
+        }
       }
     } catch (error) {
       console.error('Signup error:', error);
