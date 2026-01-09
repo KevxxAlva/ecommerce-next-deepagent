@@ -4,6 +4,7 @@ import './globals.css';
 import { Providers } from '@/components/providers';
 import { ConditionalLayout } from '@/components/conditional-layout';
 import { Toaster } from 'sonner';
+import NextTopLoader from 'nextjs-toploader';
 
 const inter = Inter({ subsets: ['latin'] });
 
@@ -36,6 +37,7 @@ export default function RootLayout({
       </head>
       <body className={inter.className}>
         <Providers>
+          <NextTopLoader color="#60B5FF" showSpinner={false} />
           <ConditionalLayout>{children}</ConditionalLayout>
           <Toaster position="top-center" richColors />
         </Providers>

@@ -32,46 +32,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       
       if (currentSession) {
-        console.log('AuthProvider: Session found', currentSession.user.id);
         setSession(currentSession);
         setUser(currentSession.user);
         
-        // Fetch user role from DB
+        // Optimistic update or check if role is already in metadata (if we put it there)
+        // For now, fetch from DB but cleaner
         try {
-            console.log('AuthProvider: Fetching role for', currentSession.user.id);
             const { data: dbUser, error } = await supabase
                 .from('User')
                 .select('role')
                 .eq('id', currentSession.user.id)
                 .single();
                 
-            if (error) {
-                console.error('AuthProvider: Error fetching role', error);
-                // Try lowercase table name as fallback if 'User' fails (common issue)
-                if (error.code === '42P01') { // undefined_table
-                    console.log('AuthProvider: Retrying with lowercase "user" table');
-                     const { data: dbUserRetry } = await supabase
-                        .from('user')
-                        .select('role')
-                        .eq('id', currentSession.user.id)
-                        .single();
-                     setRole(dbUserRetry?.role || 'CUSTOMER');
-                     console.log('AuthProvider: Role fetched (retry):', dbUserRetry?.role);
-                } else {
-                     setRole('CUSTOMER');
-                }
+            if (!error && dbUser) {
+                 setRole(dbUser.role);
             } else {
-                console.log('AuthProvider: Role fetched:', dbUser?.role);
-                setRole(dbUser?.role || 'CUSTOMER');
+                 setRole('CUSTOMER'); // Fallback safe
             }
         } catch (err) {
-            console.error('AuthProvider: Exception fetching role', err);
             setRole('CUSTOMER');
         }
 
         setStatus('authenticated');
       } else {
-        console.log('AuthProvider: No session');
         setSession(null);
         setUser(null);
         setRole(null);
@@ -87,11 +70,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     fetchSession();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       
       if (session?.user) {
+         // Only fetch role if we don't have it or if it's a new session
+         // To be safe and reactive (e.g. user promoted), we fetch.
+         // We can optimize by checking if session.user.id === user?.id
          const { data: dbUser } = await supabase
             .from('User')
             .select('role')
@@ -102,6 +88,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
          setRole(null);
          setStatus('unauthenticated');
+         if (event === 'SIGNED_OUT') {
+            setUser(null);
+            setSession(null);
+         }
       }
     });
 
@@ -133,8 +123,16 @@ export function useSession() {
 }
 
 // Helper for NextAuth compatibility
+// Helper for NextAuth compatibility
 export async function signOut(options?: { callbackUrl?: string }) {
   const supabase = createClient();
-  await supabase.auth.signOut();
+  try {
+      await supabase.auth.signOut();
+  } catch (error) {
+      console.error("Error signing out:", error);
+  }
+  
+  // Clear any local storage if used manually
+  // Force a hard navigation to clear Next.js client cache
   window.location.href = options?.callbackUrl || '/';
 }
